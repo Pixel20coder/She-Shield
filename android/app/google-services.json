@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "898358425014",
+    "project_id": "sheshield-ea683",
+    "storage_bucket": "sheshield-ea683.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:898358425014:android:02ebb5555ee0bb9f9f3d17",
+        "android_client_info": {
+          "package_name": "com.sheshield.sheshield"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBDnxhDACM9N698Q3Z54YPPisAhH6FzYj8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
