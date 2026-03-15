@@ -1,29 +1,41 @@
-# She Shield – Smart Safety Bracelet 🛡️
+# She Shield – Smart Safety Wearable System 🛡️
 
-A Flutter mobile app prototype for a wearable smart safety bracelet that sends SOS alerts and shares GPS location during emergencies.
+SheShield is a women's safety wearable system developed for HackHerThon 2026. It consists of a **smart safety bracelet** (hardware trigger) and a **Flutter mobile app** (emergency response). The bracelet detects danger via SOS button, shake/motion, and voice commands, then triggers the phone app to send alerts, share location, and contact emergency services.
+
+## System Architecture
+
+| Component | Role |
+|---|---|
+| **Bracelet (Hardware)** | Trigger device — SOS button, shake sensor, mic, camera, Bluetooth |
+| **Mobile App (Software)** | Response system — GPS, alerts, contacts, maps, notifications |
 
 ## Features
 
-- 🔴 **SOS Emergency Button** — Large animated button with haptic feedback
-- 📍 **Live Location** — Google Maps with real-time GPS tracking
-- 👥 **Emergency Contacts** — Add, delete, and manage contacts (stored locally)
-- 📤 **Share Location** — Send GPS coordinates to emergency contacts
-- ⌚ **Bracelet Status** — Connection indicator with pulse animation
+### Bracelet (Trigger Device)
+- 🔘 **Hidden SOS Button** — Press to trigger emergency alert
+- 📳 **Shake Detection** — Violent shaking auto-triggers SOS
+- 🎙️ **Voice Detection** — Keywords: "help", "bachao", "danger", "police"
+- 📷 **Camera** — Records threat footage
 
-## Screenshots
-
-The app has 3 main screens:
-1. **Home** — SOS button, bracelet status, GPS card, navigation
-2. **Live Location** — Map, coordinates, share button
-3. **Emergency Contacts** — Contact list, add/delete, SOS to all
+### Mobile App (Response System)
+- 🔐 **Login / Sign-Up** — Firebase email/password authentication
+- 🔴 **SOS Button** — 3-second hold to prevent accidental triggers
+- 📍 **Live Location** — GPS tracking with Google Maps
+- 📤 **Share Location** — WhatsApp, SMS, or clipboard
+- 🚔 **Nearby Police Stations** — OpenStreetMap Overpass API
+- 👥 **Emergency Contacts** — Add, delete, send SOS to all
+- 📡 **Bluetooth Pairing** — Connect to bracelet, receive SOS signals
+- 🎙️ **Voice Commands** — Phone mic detects emergency keywords
+- 📷 **Emergency Camera** — Record + upload to Firebase Storage
+- 🔔 **Push Notifications** — Firebase Cloud Messaging alerts
 
 ## Setup
 
 ### Prerequisites
-
 - [Flutter SDK](https://docs.flutter.dev/get-started/install) (3.0+)
 - Android Studio or VS Code with Flutter plugin
-- A Google Maps API key
+- Firebase project with Auth, Firestore, Storage, and FCM enabled
+- Google Maps API key
 
 ### 1. Install Dependencies
 
@@ -32,21 +44,12 @@ cd sheshield
 flutter pub get
 ```
 
-### 2. Add Google Maps API Key
+### 2. Firebase Setup
+- Add your `google-services.json` to `android/app/`
+- Enable Authentication (Email/Password), Firestore, Storage, and Cloud Messaging in Firebase Console
 
-Open `android/app/src/main/AndroidManifest.xml` and replace:
-
-```xml
-android:value="YOUR_GOOGLE_MAPS_API_KEY_HERE"
-```
-
-with your actual [Google Maps API key](https://developers.google.com/maps/documentation/android-sdk/get-api-key).
-
-### 3. Font Setup (Optional)
-
-The app uses the Inter font. Either:
-- Download [Inter from Google Fonts](https://fonts.google.com/specimen/Inter) and place the `.ttf` files in `assets/fonts/`
-- Or remove the `fonts` section from `pubspec.yaml` to use the system default font
+### 3. Google Maps API Key
+Your API key is already configured in `AndroidManifest.xml`.
 
 ### 4. Run the App
 
@@ -59,14 +62,23 @@ flutter run
 ```
 sheshield/
 ├── lib/
-│   ├── main.dart                    # App entry + dark theme
+│   ├── main.dart                          # App entry, auth routing, dark theme
 │   ├── screens/
-│   │   ├── home_screen.dart         # SOS button, status, GPS, nav
-│   │   ├── location_screen.dart     # Google Maps, coordinates, share
-│   │   └── contacts_screen.dart     # Contact list, add/delete
+│   │   ├── login_screen.dart              # Email/password login & sign-up
+│   │   ├── home_screen.dart               # SOS button, status, GPS, navigation
+│   │   ├── location_screen.dart           # Google Maps, live tracking, share
+│   │   ├── contacts_screen.dart           # Emergency contacts management
+│   │   ├── nearby_police_screen.dart      # Nearby police stations map
+│   │   ├── bluetooth_screen.dart          # BLE pairing + simulate triggers
+│   │   └── camera_screen.dart             # Record + upload threat footage
 │   └── services/
-│       ├── location_service.dart    # Geolocator GPS wrapper
-│       └── storage_service.dart     # SharedPreferences contacts
+│       ├── location_service.dart          # Geolocator GPS wrapper
+│       ├── storage_service.dart           # SharedPreferences contacts
+│       ├── notification_service.dart      # FCM push notifications
+│       ├── alert_service.dart             # Firestore SOS alerts
+│       ├── places_service.dart            # OpenStreetMap police stations
+│       ├── voice_trigger_service.dart     # Speech-to-text voice commands
+│       └── bracelet_service.dart          # BLE bracelet command listener
 ├── android/
 │   └── app/src/main/AndroidManifest.xml
 ├── pubspec.yaml
@@ -76,17 +88,21 @@ sheshield/
 ## Dependencies
 
 | Package | Purpose |
-|---------|---------|
+|---|---|
+| `firebase_core` | Firebase initialization |
+| `firebase_auth` | Email/password authentication |
+| `cloud_firestore` | SOS alerts & location storage |
+| `firebase_storage` | Video upload from camera |
+| `firebase_messaging` | Push notifications |
 | `geolocator` | GPS location access |
 | `google_maps_flutter` | Map display |
+| `flutter_blue_plus` | Bluetooth Low Energy |
+| `speech_to_text` | Voice command detection |
+| `camera` | Video recording |
 | `shared_preferences` | Local contact storage |
-| `share_plus` | Share location via OS share sheet |
+| `url_launcher` | Open URLs, SMS |
 | `permission_handler` | Runtime permissions |
-| `url_launcher` | Open URLs |
 
-## Notes
+## License
 
-- This is a **prototype** — SOS alerts are simulated (no actual SMS sending)
-- The bracelet connection status is togglable for demo purposes
-- Default sample contacts (Mom, Dad, Sister) are added on first launch
-- Location defaults to New Delhi if GPS is unavailable
+Built for HackHerThon 2026 🏆

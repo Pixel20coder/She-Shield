@@ -40,7 +40,12 @@ class _NearbyPoliceScreenState extends State<NearbyPoliceScreen> {
       _lat = pos.latitude;
       _lng = pos.longitude;
 
-      // 2. Fetch nearby stations.
+      // 2. Move camera to actual user location.
+      _mapController?.animateCamera(
+        CameraUpdate.newLatLngZoom(LatLng(_lat, _lng), 13),
+      );
+
+      // 3. Fetch nearby stations.
       await _fetchStations();
     } catch (e) {
       if (mounted) {
@@ -169,8 +174,15 @@ class _NearbyPoliceScreenState extends State<NearbyPoliceScreen> {
                       zoom: 13,
                     ),
                     markers: _markers,
-                    onMapCreated: (controller) =>
-                        _mapController = controller,
+                    onMapCreated: (controller) {
+                      _mapController = controller;
+                      // Re-center after map is ready if location already fetched
+                      if (_lat != 28.6139 || _lng != 77.2090) {
+                        controller.animateCamera(
+                          CameraUpdate.newLatLngZoom(LatLng(_lat, _lng), 13),
+                        );
+                      }
+                    },
                     myLocationEnabled: true,
                     myLocationButtonEnabled: false,
                     zoomControlsEnabled: true,

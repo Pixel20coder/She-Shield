@@ -2,9 +2,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
+import '../services/bracelet_service.dart';
 
 class BluetoothScreen extends StatefulWidget {
   const BluetoothScreen({super.key});
+
+  /// Callback set by the parent (HomeScreen) to handle SOS triggers.
+  static BraceletCommandCallback? onBraceletCommand;
 
   @override
   State<BluetoothScreen> createState() => _BluetoothScreenState();
@@ -16,6 +21,7 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
   BluetoothDevice? _connectedDevice;
   StreamSubscription? _scanSub;
   StreamSubscription? _connectionSub;
+  final BraceletService _braceletService = BraceletService();
 
   @override
   void initState() {
@@ -27,6 +33,7 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
   void dispose() {
     _scanSub?.cancel();
     _connectionSub?.cancel();
+    _braceletService.dispose();
     FlutterBluePlus.stopScan();
     super.dispose();
   }
@@ -41,6 +48,9 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
   Future<void> _startScan() async {
     if (_isScanning) return;
 
+    // Request location + Bluetooth permissions (required for BLE scan on Android)
+    await [Permission.location, Permission.bluetoothScan, Permission.bluetoothConnect].request();
+
     setState(() {
       _scanResults = [];
       _isScanning = true;
@@ -51,7 +61,7 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
       _scanSub = FlutterBluePlus.scanResults.listen((results) {
         if (mounted) {
           setState(() {
-            // Filter out unnamed devices and deduplicate
+            // Only show devices that broadcast a name
             _scanResults = results
                 .where((r) => r.device.platformName.isNotEmpty)
                 .toList();
@@ -60,7 +70,10 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
         }
       });
 
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 15),
+        androidUsesFineLocation: true,
+      );
     } catch (e) {
       _showSnackBar('⚠️ Scan failed: ${e.toString()}');
     }
@@ -81,7 +94,7 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
         if (mounted) {
           if (state == BluetoothConnectionState.disconnected) {
             setState(() => _connectedDevice = null);
-            _showSnackBar('🔴 ${device.platformName} disconnected');
+            _showPopup('🔴 Disconnected', '${device.platformName} has been disconnected.');
           }
         }
       });
@@ -89,10 +102,17 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
       if (mounted) {
         setState(() => _connectedDevice = device);
         HapticFeedback.heavyImpact();
-        _showSnackBar('✅ Connected to ${device.platformName}');
+        _showPopup('✅ Paired Successfully', 'Connected to ${device.platformName}.\nYour bracelet is now active and listening for SOS signals.');
+
+        // Start bracelet monitoring
+        _braceletService.onCommand = (cmd) {
+          BluetoothScreen.onBraceletCommand?.call(cmd);
+        };
+        await _braceletService.startMonitoring(device);
+        if (mounted) setState(() {});
       }
     } catch (e) {
-      _showSnackBar('❌ Connection failed');
+      _showPopup('❌ Pairing Failed', 'Could not connect to ${device.platformName}.\nMake sure the device is in pairing mode and try again.');
     }
   }
 
@@ -101,11 +121,37 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
     final name = _connectedDevice!.platformName;
     try {
       await _connectedDevice!.disconnect();
+      _braceletService.stopMonitoring();
       setState(() => _connectedDevice = null);
-      _showSnackBar('🔴 Disconnected from $name');
+      _showPopup('🔴 Disconnected', 'Successfully disconnected from $name.');
     } catch (_) {
-      _showSnackBar('⚠️ Disconnect failed');
+      _showPopup('⚠️ Error', 'Could not disconnect from $name. Please try again.');
     }
+  }
+
+  void _showPopup(String title, String message) {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          title,
+          style: const TextStyle(color: Color(0xFFF0F0F5), fontWeight: FontWeight.w700, fontSize: 18),
+        ),
+        content: Text(
+          message,
+          style: const TextStyle(color: Color(0xFF8A8A9A), fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK', style: TextStyle(color: Color(0xFFE53935), fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showSnackBar(String msg) {
@@ -141,115 +187,121 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      body: Column(
-        children: [
-          // Connected device card
-          if (_connectedDevice != null) _buildConnectedCard(),
+      body: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        child: Column(
+          children: [
+            // Connected device card
+            if (_connectedDevice != null) _buildConnectedCard(),
 
-          const SizedBox(height: 8),
+            const SizedBox(height: 8),
 
-          // Scan button
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _isScanning ? null : _startScan,
-                icon: _isScanning
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.bluetooth_searching, size: 20),
-                label: Text(_isScanning ? 'Scanning…' : 'Scan for Devices'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF42A5F5),
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
+            // Scan button
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isScanning ? null : _startScan,
+                  icon: _isScanning
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.bluetooth_searching, size: 20),
+                  label: Text(_isScanning ? 'Scanning…' : 'Scan for Devices'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF42A5F5),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    elevation: 0,
                   ),
-                  elevation: 0,
                 ),
               ),
             ),
-          ),
 
-          const SizedBox(height: 16),
+            const SizedBox(height: 16),
 
-          // Section header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Row(
-              children: [
-                const Text(
-                  'NEARBY DEVICES',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF5A5A6E),
-                    letterSpacing: 0.5,
-                  ),
-                ),
-                const Spacer(),
-                Text(
-                  '${_scanResults.length} found',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Color(0xFF5A5A6E),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 10),
-
-          // Device list
-          Expanded(
-            child: _scanResults.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.bluetooth_disabled,
-                          size: 48,
-                          color: Colors.white.withValues(alpha: 0.15),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          _isScanning
-                              ? 'Searching for devices…'
-                              : 'Tap "Scan" to find nearby devices',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                            color: Color(0xFF5A5A6E),
-                          ),
-                        ),
-                      ],
+            // Section header
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Row(
+                children: [
+                  const Text(
+                    'NEARBY DEVICES',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF5A5A6E),
+                      letterSpacing: 0.5,
                     ),
-                  )
-                : ListView.separated(
-                    padding: const EdgeInsets.symmetric(horizontal: 20),
-                    itemCount: _scanResults.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (_, i) => _buildDeviceCard(_scanResults[i]),
                   ),
-          ),
+                  const Spacer(),
+                  Text(
+                    '${_scanResults.length} found',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Color(0xFF5A5A6E),
+                    ),
+                  ),
+                ],
+              ),
+            ),
 
-          const SizedBox(height: 16),
-        ],
+            const SizedBox(height: 10),
+
+            // Device list (scrollable within the page)
+            if (_scanResults.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 40),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.bluetooth_disabled,
+                      size: 48,
+                      color: Colors.white.withValues(alpha: 0.15),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _isScanning
+                          ? 'Searching for devices…'
+                          : 'Tap "Scan" to find nearby devices',
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: Color(0xFF5A5A6E),
+                      ),
+                    ),
+                  ],
+                ),
+              )
+            else
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                itemCount: _scanResults.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                itemBuilder: (_, i) => _buildDeviceCard(_scanResults[i]),
+              ),
+
+            const SizedBox(height: 16),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildConnectedCard() {
+    final monitoring = _braceletService.isMonitoring;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
       child: Container(
@@ -263,62 +315,98 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0xFF00E676).withValues(alpha: 0.3)),
         ),
-        child: Row(
+        child: Column(
           children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                color: const Color(0x2600E676),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Center(
-                child: Icon(Icons.bluetooth_connected, color: Color(0xFF00E676), size: 24),
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'CONNECTED',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF00E676),
-                      letterSpacing: 0.5,
-                    ),
+            Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: const Color(0x2600E676),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _connectedDevice!.platformName,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFFF0F0F5),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            GestureDetector(
-              onTap: _disconnectDevice,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Text(
-                  'Disconnect',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF8A8A9A),
+                  child: const Center(
+                    child: Icon(Icons.bluetooth_connected, color: Color(0xFF00E676), size: 24),
                   ),
                 ),
-              ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        monitoring ? 'BRACELET ACTIVE' : 'CONNECTED',
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF00E676),
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _connectedDevice!.platformName,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFF0F0F5),
+                        ),
+                      ),
+                      if (monitoring)
+                        const Text(
+                          'Listening for SOS signals…',
+                          style: TextStyle(fontSize: 11, color: Color(0xFF8A8A9A)),
+                        ),
+                    ],
+                  ),
+                ),
+                GestureDetector(
+                  onTap: _disconnectDevice,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Text(
+                      'Disconnect',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF8A8A9A),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            // Demo simulate buttons
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _SimulateBtn(
+                    label: '🚨 Simulate SOS',
+                    color: const Color(0xFFE53935),
+                    onTap: () {
+                      _braceletService.simulateCommand(BraceletCommand.sos);
+                      _showSnackBar('🚨 Simulated SOS from bracelet');
+                    },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _SimulateBtn(
+                    label: '📳 Simulate Shake',
+                    color: const Color(0xFFFF7043),
+                    onTap: () {
+                      _braceletService.simulateCommand(BraceletCommand.shake);
+                      _showSnackBar('📳 Simulated shake from bracelet');
+                    },
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -420,5 +508,41 @@ class _BluetoothScreenState extends State<BluetoothScreen> {
     if (rssi >= -75) return Icons.signal_cellular_alt;
     if (rssi >= -85) return Icons.signal_cellular_alt_2_bar;
     return Icons.signal_cellular_alt_1_bar;
+  }
+}
+
+class _SimulateBtn extends StatelessWidget {
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _SimulateBtn({
+    required this.label,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          border: Border.all(color: color.withValues(alpha: 0.4)),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }

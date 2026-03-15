@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../services/alert_service.dart';
@@ -8,6 +10,8 @@ import 'location_screen.dart';
 import 'contacts_screen.dart';
 import 'nearby_police_screen.dart';
 import 'bluetooth_screen.dart';
+import 'past_emergencies_screen.dart';
+import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -60,6 +64,59 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
     _fetchLocation();
     _initVoiceListener();
+    _checkFirstLogin();
+
+    // Listen for bracelet commands (SOS, shake, voice, camera)
+    BluetoothScreen.onBraceletCommand = (cmd) {
+      if (!mounted || _sosActive) return;
+      _triggerSOS();
+    };
+  }
+
+  /// After first sign-in, prompt user to pair the bracelet.
+  Future<void> _checkFirstLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final key = 'paired_$uid';
+    if (prefs.getBool(key) == true) return; // already prompted
+
+    // Give UI time to render before showing the dialog
+    await Future.delayed(const Duration(milliseconds: 800));
+    if (!mounted) return;
+
+    final shouldPair = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          '⌚ Pair Your Bracelet',
+          style: TextStyle(color: Color(0xFFF0F0F5), fontWeight: FontWeight.w700, fontSize: 18),
+        ),
+        content: const Text(
+          'Welcome to SheShield! To get started, pair your smart safety bracelet via Bluetooth.',
+          style: TextStyle(color: Color(0xFF8A8A9A), fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Later', style: TextStyle(color: Color(0xFF8A8A9A))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Pair Now', style: TextStyle(color: Color(0xFFE53935), fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+
+    await prefs.setBool(key, true); // don't show again
+
+    if (shouldPair == true && mounted) {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const BluetoothScreen()));
+    }
   }
 
   Future<void> _initVoiceListener() async {
@@ -146,15 +203,18 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: Column(
-          children: [
-            _buildTopBar(),
-            Expanded(child: _buildSOSSection()),
-            _buildInfoCards(),
-            const SizedBox(height: 16),
-            _buildNavButtons(),
-            const SizedBox(height: 24),
-          ],
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
+            children: [
+              _buildTopBar(),
+              _buildSOSSection(),
+              _buildInfoCards(),
+              const SizedBox(height: 16),
+              _buildNavButtons(),
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
       ),
     );
@@ -206,38 +266,61 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ],
           ),
-          GestureDetector(
-            onTap: () {
-              setState(() => _braceletConnected = !_braceletConnected);
-              HapticFeedback.lightImpact();
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              decoration: BoxDecoration(
-                color: _braceletConnected
-                    ? const Color(0x2600E676)
-                    : const Color(0x26FF9800),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _StatusDot(connected: _braceletConnected),
-                  const SizedBox(width: 8),
-                  Text(
-                    _braceletConnected ? 'CONNECTED' : 'DISCONNECTED',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
-                      color: _braceletConnected
-                          ? const Color(0xFF00E676)
-                          : const Color(0xFFFF9800),
-                    ),
+          Row(
+            children: [
+              GestureDetector(
+                onTap: () {
+                  setState(() => _braceletConnected = !_braceletConnected);
+                  HapticFeedback.lightImpact();
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: _braceletConnected
+                        ? const Color(0x2600E676)
+                        : const Color(0x26FF9800),
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                ],
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _StatusDot(connected: _braceletConnected),
+                      const SizedBox(width: 8),
+                      Text(
+                        _braceletConnected ? 'CONNECTED' : 'DISCONNECTED',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                          color: _braceletConnected
+                              ? const Color(0xFF00E676)
+                              : const Color(0xFFFF9800),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                ),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1A1A2E),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
+                  ),
+                  child: const Center(
+                    child: Icon(Icons.person_outline, color: Color(0xFF8A8A9A), size: 20),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -456,6 +539,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ),
                 ),
               ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: _NavButton(
+                  icon: '📹',
+                  iconBgColor: const Color(0x1FFF7043),
+                  label: 'Past\nEmergencies',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const PastEmergenciesScreen()),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(child: SizedBox()),
             ],
           ),
         ],
