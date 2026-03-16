@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
@@ -29,55 +30,44 @@ class PoliceStation {
   }
 }
 
-/// Service for fetching nearby police stations using multiple fallback APIs.
-/// Tries Overpass API first, then falls back to Nominatim search.
+/// Service for fetching nearby police stations.
+/// Races multiple APIs in parallel and returns the first successful response.
 class PlacesService {
-  /// List of Overpass API mirrors to try in order.
-  static const _overpassEndpoints = [
-    'https://overpass-api.de/api/interpreter',
-    'https://overpass.kumi.systems/api/interpreter',
-    'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-  ];
-
   /// Fetch police stations near the given coordinates.
-  /// Uses Overpass API with automatic mirror fallback, then Nominatim as a
-  /// last resort.
+  /// Fires ALL APIs simultaneously and returns whichever responds first
+  /// with results — no waiting for sequential timeouts.
   static Future<List<PoliceStation>> fetchNearbyPoliceStations(
     double lat,
     double lng, {
     int radiusMeters = 5000,
   }) async {
-    // --- Attempt 1: Overpass API (try each mirror) ---
-    for (final endpoint in _overpassEndpoints) {
-      try {
-        final results = await _fetchFromOverpass(endpoint, lat, lng, radiusMeters);
-        if (results.isNotEmpty) return results;
-      } catch (_) {
-        // Mirror failed — try next one.
-      }
-    }
+    // Fire all sources in parallel and race them.
+    final results = await Future.any<List<PoliceStation>>([
+      // Overpass mirrors (5km radius, 8s timeout each)
+      _fetchFromOverpass(
+        'https://overpass-api.de/api/interpreter', lat, lng, radiusMeters,
+      ),
+      _fetchFromOverpass(
+        'https://overpass.kumi.systems/api/interpreter', lat, lng, radiusMeters,
+      ),
+      // Nominatim as a parallel competitor (often faster)
+      _fetchFromNominatim(lat, lng),
+    ]).timeout(
+      const Duration(seconds: 10),
+      onTimeout: () => <PoliceStation>[],
+    );
 
-    // --- Attempt 2: Overpass with larger radius ---
-    for (final endpoint in _overpassEndpoints) {
-      try {
-        final results = await _fetchFromOverpass(endpoint, lat, lng, 15000);
-        if (results.isNotEmpty) return results;
-      } catch (_) {
-        // Mirror failed — try next one.
-      }
-    }
+    // If we got results, return them.
+    if (results.isNotEmpty) return results;
 
-    // --- Attempt 3: Nominatim reverse-geocode search as fallback ---
+    // If all returned empty, try a wider radius (15km) as a last attempt.
     try {
-      final results = await _fetchFromNominatim(lat, lng);
-      if (results.isNotEmpty) return results;
+      return await _fetchFromOverpass(
+        'https://overpass-api.de/api/interpreter', lat, lng, 15000,
+      ).timeout(const Duration(seconds: 10), onTimeout: () => []);
     } catch (_) {
-      // Nominatim also failed.
+      return [];
     }
-
-    // All attempts exhausted — return empty list so the UI shows
-    // "No nearby police stations found" instead of an error.
-    return [];
   }
 
   // -------------------------------------------------------------------------
@@ -89,19 +79,14 @@ class PlacesService {
     double lng,
     int radiusMeters,
   ) async {
-    final query = '''
-[out:json][timeout:15];
-(
-  node["amenity"="police"](around:$radiusMeters,$lat,$lng);
-  way["amenity"="police"](around:$radiusMeters,$lat,$lng);
-);
-out center body;
-''';
+    final query = '[out:json][timeout:8];'
+        'node["amenity"="police"](around:$radiusMeters,$lat,$lng);'
+        'out body;';
 
     final uri = Uri.parse(endpoint);
     final response = await http
         .post(uri, body: {'data': query})
-        .timeout(const Duration(seconds: 20));
+        .timeout(const Duration(seconds: 8));
 
     if (response.statusCode != 200) {
       throw Exception('Overpass returned ${response.statusCode}');
@@ -110,28 +95,10 @@ out center body;
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     final elements = data['elements'] as List<dynamic>? ?? [];
 
-    return _parseOverpassElements(elements, lat, lng);
-  }
-
-  static List<PoliceStation> _parseOverpassElements(
-    List<dynamic> elements,
-    double userLat,
-    double userLng,
-  ) {
     final stations = <PoliceStation>[];
-
     for (final el in elements) {
-      double? stationLat;
-      double? stationLng;
-
-      if (el['type'] == 'node') {
-        stationLat = (el['lat'] as num?)?.toDouble();
-        stationLng = (el['lon'] as num?)?.toDouble();
-      } else if (el['center'] != null) {
-        stationLat = (el['center']['lat'] as num?)?.toDouble();
-        stationLng = (el['center']['lon'] as num?)?.toDouble();
-      }
-
+      final stationLat = (el['lat'] as num?)?.toDouble();
+      final stationLng = (el['lon'] as num?)?.toDouble();
       if (stationLat == null || stationLng == null) continue;
 
       final tags = el['tags'] as Map<String, dynamic>? ?? {};
@@ -141,7 +108,7 @@ out center body;
           '';
 
       final distance = Geolocator.distanceBetween(
-        userLat, userLng, stationLat, stationLng,
+        lat, lng, stationLat, stationLng,
       );
 
       stations.add(PoliceStation(
@@ -165,13 +132,12 @@ out center body;
     double lat,
     double lng,
   ) async {
-    // Nominatim search for police stations near coordinates.
     final uri = Uri.parse(
       'https://nominatim.openstreetmap.org/search'
       '?q=police+station'
       '&format=json'
       '&limit=20'
-      '&viewbox=${lng - 0.1},${lat + 0.1},${lng + 0.1},${lat - 0.1}'
+      '&viewbox=${lng - 0.05},${lat + 0.05},${lng + 0.05},${lat - 0.05}'
       '&bounded=1'
       '&addressdetails=1',
     );
@@ -179,7 +145,7 @@ out center body;
     final response = await http.get(
       uri,
       headers: {'User-Agent': 'SheShield-App/1.0'},
-    ).timeout(const Duration(seconds: 15));
+    ).timeout(const Duration(seconds: 8));
 
     if (response.statusCode != 200) {
       throw Exception('Nominatim returned ${response.statusCode}');
@@ -193,7 +159,8 @@ out center body;
       final stationLng = double.tryParse(r['lon']?.toString() ?? '');
       if (stationLat == null || stationLng == null) continue;
 
-      final name = r['display_name']?.toString().split(',').first ?? 'Police Station';
+      final name =
+          r['display_name']?.toString().split(',').first ?? 'Police Station';
       final address = r['display_name']?.toString() ?? '';
 
       final distance = Geolocator.distanceBetween(
@@ -202,7 +169,8 @@ out center body;
 
       stations.add(PoliceStation(
         name: name,
-        vicinity: address.length > 60 ? '${address.substring(0, 57)}...' : address,
+        vicinity:
+            address.length > 60 ? '${address.substring(0, 57)}...' : address,
         lat: stationLat,
         lng: stationLng,
         placeId: r['place_id']?.toString() ?? '',
