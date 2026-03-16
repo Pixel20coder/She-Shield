@@ -64,8 +64,10 @@ class _NearbyPoliceScreenState extends State<NearbyPoliceScreen> {
     });
 
     try {
+      debugPrint('Fetching police stations near $_lat, $_lng ...');
       final stations =
           await PlacesService.fetchNearbyPoliceStations(_lat, _lng);
+      debugPrint('Found ${stations.length} police stations');
       if (mounted) {
         setState(() {
           _stations = stations;
@@ -74,9 +76,10 @@ class _NearbyPoliceScreenState extends State<NearbyPoliceScreen> {
         });
       }
     } catch (e) {
+      debugPrint('Error fetching police stations: $e');
       if (mounted) {
         setState(() {
-          _error = e.toString();
+          _error = 'Unable to load police stations. Check your internet connection and try again.';
           _loading = false;
         });
       }
