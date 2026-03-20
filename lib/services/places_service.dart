@@ -34,40 +34,52 @@ class PoliceStation {
 /// Races multiple APIs in parallel and returns the first successful response.
 class PlacesService {
   /// Fetch police stations near the given coordinates.
-  /// Fires ALL APIs simultaneously and returns whichever responds first
-  /// with results — no waiting for sequential timeouts.
+  /// Fires ALL APIs simultaneously, merges results, deduplicates,
+  /// and returns them sorted by distance (nearest first).
   static Future<List<PoliceStation>> fetchNearbyPoliceStations(
     double lat,
     double lng, {
-    int radiusMeters = 5000,
+    int radiusMeters = 10000,
   }) async {
-    // Fire all sources in parallel and race them.
-    final results = await Future.any<List<PoliceStation>>([
-      // Overpass mirrors (5km radius, 8s timeout each)
+    // Fire all sources in parallel and collect all results.
+    final futures = await Future.wait<List<PoliceStation>>([
       _fetchFromOverpass(
         'https://overpass-api.de/api/interpreter', lat, lng, radiusMeters,
-      ),
+      ).catchError((_) => <PoliceStation>[]),
       _fetchFromOverpass(
         'https://overpass.kumi.systems/api/interpreter', lat, lng, radiusMeters,
-      ),
-      // Nominatim as a parallel competitor (often faster)
-      _fetchFromNominatim(lat, lng),
+      ).catchError((_) => <PoliceStation>[]),
+      _fetchFromNominatim(lat, lng)
+          .catchError((_) => <PoliceStation>[]),
     ]).timeout(
-      const Duration(seconds: 10),
-      onTimeout: () => <PoliceStation>[],
+      const Duration(seconds: 12),
+      onTimeout: () => [<PoliceStation>[], <PoliceStation>[], <PoliceStation>[]],
     );
 
-    // If we got results, return them.
-    if (results.isNotEmpty) return results;
-
-    // If all returned empty, try a wider radius (15km) as a last attempt.
-    try {
-      return await _fetchFromOverpass(
-        'https://overpass-api.de/api/interpreter', lat, lng, 15000,
-      ).timeout(const Duration(seconds: 10), onTimeout: () => []);
-    } catch (_) {
-      return [];
+    // Merge all results into one list.
+    final allStations = <PoliceStation>[];
+    for (final list in futures) {
+      allStations.addAll(list);
     }
+
+    // Deduplicate stations that are within 100m of each other.
+    final unique = <PoliceStation>[];
+    for (final station in allStations) {
+      final isDuplicate = unique.any((existing) {
+        final dist = Geolocator.distanceBetween(
+          existing.lat, existing.lng, station.lat, station.lng,
+        );
+        return dist < 100; // within 100m = same station
+      });
+      if (!isDuplicate) {
+        unique.add(station);
+      }
+    }
+
+    // Sort by distance ascending (nearest first).
+    unique.sort((a, b) => a.distanceMeters.compareTo(b.distanceMeters));
+
+    return unique;
   }
 
   // -------------------------------------------------------------------------
@@ -136,8 +148,8 @@ class PlacesService {
       'https://nominatim.openstreetmap.org/search'
       '?q=police+station'
       '&format=json'
-      '&limit=20'
-      '&viewbox=${lng - 0.05},${lat + 0.05},${lng + 0.05},${lat - 0.05}'
+      '&limit=30'
+      '&viewbox=${lng - 0.1},${lat + 0.1},${lng + 0.1},${lat - 0.1}'
       '&bounded=1'
       '&addressdetails=1',
     );

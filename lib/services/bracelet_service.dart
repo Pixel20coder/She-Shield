@@ -1,129 +1,147 @@
 import 'dart:async';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_bluetooth_serial_ble/flutter_bluetooth_serial_ble.dart';
 
-/// Commands that the bracelet can send to trigger actions.
-enum BraceletCommand {
-  sos,       // SOS button pressed
-  shake,     // Violent shake detected
-  voice,     // Voice keyword detected
-  camera,    // Camera recording triggered
-}
+/// Commands from the ESP32 bracelet.
+enum BraceletCommand { sos, shake, voice, camera }
 
-/// Callback when a command is received from the bracelet.
 typedef BraceletCommandCallback = void Function(BraceletCommand command);
 
-/// Service that monitors a connected BLE bracelet for SOS & alert commands.
+/// **Global singleton** Bluetooth Classic service.
 ///
-/// The bracelet is expected to expose a BLE characteristic that sends
-/// notification payloads when events occur. The service subscribes to
-/// that characteristic and decodes commands.
+/// Connection persists across all screens. Only disconnects
+/// when the user explicitly taps "Disconnect".
 ///
-/// **Protocol (simple byte-based):**
-/// - `0x01` → SOS button pressed
-/// - `0x02` → Shake / motion detected
-/// - `0x03` → Voice keyword detected
-/// - `0x04` → Camera recording trigger
-///
-/// For the hackathon demo, the service also simulates commands if no
-/// real bracelet is connected.
-class BraceletService {
-  BluetoothDevice? _device;
-  StreamSubscription? _notifySub;
-  StreamSubscription? _connectionSub;
+/// ESP32 sends:  "SOS\n", "SHAKE\n", "BUTTON SOS\n", "MOTION SOS\n"
+/// App sends:    "BUZZER_ON\n", "LED_ON\n", etc.
+class BraceletService extends ChangeNotifier {
+  // ── Singleton ──
+  BraceletService._();
+  static final BraceletService instance = BraceletService._();
+
+  BluetoothConnection? _connection;
+  StreamSubscription? _inputSub;
+  String _buffer = '';
+
+  // ── Public state ──
+  bool _isConnected = false;
+  String _deviceName = '';
+  String _deviceAddress = '';
+
+  bool get isConnected => _isConnected;
+  String get deviceName => _deviceName;
+  String get deviceAddress => _deviceAddress;
+
+  /// Global callback — fires from ANY screen when SOS received.
   BraceletCommandCallback? onCommand;
 
-  bool _isMonitoring = false;
+  /// Connect to a device via RFCOMM and start listening.
+  Future<bool> connect(BluetoothDevice device) async {
+    // Already connected to this device
+    if (_isConnected && _deviceAddress == device.address) return true;
 
-  /// Whether the bracelet is currently connected and being monitored.
-  bool get isMonitoring => _isMonitoring;
+    // Disconnect previous if any
+    if (_isConnected) disconnect();
 
-  /// The name of the connected bracelet device.
-  String get deviceName => _device?.platformName ?? 'Unknown';
-
-  /// Start monitoring a connected device for SOS commands.
-  ///
-  /// Discovers services, finds the SOS characteristic, and subscribes
-  /// to notifications.
-  Future<bool> startMonitoring(BluetoothDevice device) async {
-    _device = device;
-
-    // Listen for disconnection
-    _connectionSub?.cancel();
-    _connectionSub = device.connectionState.listen((state) {
-      if (state == BluetoothConnectionState.disconnected) {
-        _isMonitoring = false;
-      }
-    });
+    _deviceName = device.name ?? device.address;
+    _deviceAddress = device.address;
 
     try {
-      // Discover all services on the bracelet
-      final services = await device.discoverServices();
+      debugPrint('BraceletService: Connecting to $_deviceName…');
+      _connection = await BluetoothConnection.toAddress(device.address);
+      debugPrint('BraceletService: ✅ Connected to $_deviceName');
 
-      // Look for a writable/notify characteristic to subscribe to.
-      // In a real product, you'd target a specific service UUID.
-      // For the hackathon, we subscribe to the first notifiable characteristic.
-      for (final service in services) {
-        for (final char in service.characteristics) {
-          if (char.properties.notify || char.properties.indicate) {
-            await char.setNotifyValue(true);
-            _notifySub?.cancel();
-            _notifySub = char.onValueReceived.listen(_handleData);
-            _isMonitoring = true;
-            return true;
-          }
-        }
-      }
+      _inputSub?.cancel();
+      _inputSub = _connection!.input?.listen(
+        _handleData,
+        onDone: () {
+          debugPrint('BraceletService: Connection closed by remote');
+          _setDisconnected();
+        },
+        onError: (e) {
+          debugPrint('BraceletService: Stream error — $e');
+          _setDisconnected();
+        },
+      );
 
-      // No notifiable characteristic found — still mark as monitoring
-      // so the UI can show the connection status.
-      _isMonitoring = true;
+      _isConnected = true;
+      notifyListeners();
       return true;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('BraceletService: Connection failed — $e');
+      _setDisconnected();
       return false;
     }
   }
 
-  /// Stop monitoring and clean up subscriptions.
-  void stopMonitoring() {
-    _notifySub?.cancel();
-    _notifySub = null;
-    _connectionSub?.cancel();
-    _connectionSub = null;
-    _isMonitoring = false;
+  /// Explicitly disconnect (user tapped "Disconnect").
+  void disconnect() {
+    debugPrint('BraceletService: Disconnecting…');
+    _inputSub?.cancel();
+    _inputSub = null;
+    try { _connection?.finish(); } catch (_) {}
+    _connection = null;
+    _setDisconnected();
   }
 
-  /// Simulate a bracelet command (for hackathon demo).
+  void _setDisconnected() {
+    _isConnected = false;
+    _buffer = '';
+    notifyListeners();
+  }
+
+  /// Send a string command to ESP32.
+  Future<void> send(String command) async {
+    if (_connection == null || !_isConnected) return;
+    try {
+      _connection!.output.add(Uint8List.fromList(utf8.encode('$command\n')));
+      await _connection!.output.allSent;
+      debugPrint('BraceletService: Sent "$command"');
+    } catch (e) {
+      debugPrint('BraceletService: Write failed — $e');
+    }
+  }
+
+  Future<void> activateBuzzer() => send('BUZZER_ON');
+  Future<void> stopBuzzer() => send('BUZZER_OFF');
+  Future<void> ledOn() => send('LED_ON');
+  Future<void> ledOff() => send('LED_OFF');
+
+  /// Parse incoming serial data line-by-line.
+  void _handleData(Uint8List data) {
+    _buffer += utf8.decode(data, allowMalformed: true);
+
+    while (_buffer.contains('\n')) {
+      final idx = _buffer.indexOf('\n');
+      final line = _buffer.substring(0, idx).trim();
+      _buffer = _buffer.substring(idx + 1);
+      if (line.isEmpty) continue;
+
+      debugPrint('BraceletService: ◀ "$line"');
+
+      BraceletCommand? cmd;
+      final upper = line.toUpperCase();
+      if (upper.contains('SOS')) {
+        cmd = BraceletCommand.sos;
+      } else if (upper.contains('SHAKE')) {
+        cmd = BraceletCommand.shake;
+      } else if (upper.contains('VOICE')) {
+        cmd = BraceletCommand.voice;
+      } else if (upper.contains('CAM')) {
+        cmd = BraceletCommand.camera;
+      }
+
+      if (cmd != null) {
+        debugPrint('BraceletService: 🚨 Command → $cmd');
+        onCommand?.call(cmd);
+      }
+    }
+  }
+
+  /// For demo: fire a command without a real device.
   void simulateCommand(BraceletCommand command) {
+    debugPrint('BraceletService: Simulated $command');
     onCommand?.call(command);
-  }
-
-  /// Decode raw BLE data and fire the callback.
-  void _handleData(List<int> data) {
-    if (data.isEmpty) return;
-
-    BraceletCommand? command;
-    switch (data[0]) {
-      case 0x01:
-        command = BraceletCommand.sos;
-        break;
-      case 0x02:
-        command = BraceletCommand.shake;
-        break;
-      case 0x03:
-        command = BraceletCommand.voice;
-        break;
-      case 0x04:
-        command = BraceletCommand.camera;
-        break;
-    }
-
-    if (command != null) {
-      onCommand?.call(command);
-    }
-  }
-
-  /// Clean up.
-  void dispose() {
-    stopMonitoring();
   }
 }

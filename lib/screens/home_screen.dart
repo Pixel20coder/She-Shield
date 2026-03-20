@@ -6,9 +6,12 @@ import '../services/location_service.dart';
 import '../services/notification_service.dart';
 import '../services/alert_service.dart';
 import '../services/voice_trigger_service.dart';
+import '../services/sms_service.dart';
+import '../services/video_recording_service.dart';
 import 'location_screen.dart';
 import 'contacts_screen.dart';
 import 'nearby_police_screen.dart';
+import '../services/bracelet_service.dart';
 import 'bluetooth_screen.dart';
 import 'past_emergencies_screen.dart';
 import 'profile_screen.dart';
@@ -66,8 +69,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     _initVoiceListener();
     _checkFirstLogin();
 
-    // Listen for bracelet commands (SOS, shake, voice, camera)
-    BluetoothScreen.onBraceletCommand = (cmd) {
+    // Listen for bracelet commands globally via singleton
+    BraceletService.instance.onCommand = (cmd) {
       if (!mounted || _sosActive) return;
       _triggerSOS();
     };
@@ -92,11 +95,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         backgroundColor: const Color(0xFF1A1A2E),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Text(
-          '⌚ Pair Your Bracelet',
+          '⌚ Pair Your Device',
           style: TextStyle(color: Color(0xFFF0F0F5), fontWeight: FontWeight.w700, fontSize: 18),
         ),
         content: const Text(
-          'Welcome to SheShield! To get started, pair your smart safety bracelet via Bluetooth.',
+          'Welcome to SheShield! Connect your smart safety device via Bluetooth to get started.',
           style: TextStyle(color: Color(0xFF8A8A9A), fontSize: 14),
         ),
         actions: [
@@ -163,6 +166,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     // Broadcast emergency alert with location + contacts to Firestore.
     AlertService.broadcastAlert(lat: _lat, lng: _lng);
 
+    // Send SOS SMS to all saved emergency contacts with location.
+    SmsService.sendSOSToAllContacts(lat: _lat, lng: _lng);
+
+    // Start 30-second video recording and upload to Firebase Storage.
+    VideoRecordingService.startSOSRecording();
+
     // Start live location tracking (writes to Firestore every 5 s).
     LocationService.startSOS('user_placeholder');
 
@@ -174,6 +183,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         onCancel: () {
           // Stop live location tracking.
           LocationService.stopSOS();
+          // Stop video recording and upload what was captured.
+          VideoRecordingService.stopAndUpload();
           setState(() => _sosActive = false);
           _sosFlashController.stop();
           _sosFlashController.reset();

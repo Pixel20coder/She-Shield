@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/storage_service.dart';
+import '../services/sms_service.dart';
 
 class ContactsScreen extends StatefulWidget {
   const ContactsScreen({super.key});
@@ -29,10 +30,64 @@ class _ContactsScreenState extends State<ContactsScreen> {
     }
   }
 
-  Future<void> _addContact(String name, String phone) async {
+  Future<void> _confirmAndAddContact(String name, String phone) async {
+    // Show confirmation prompt before adding
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A2E),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          '📩 Send Notification SMS?',
+          style: TextStyle(
+            color: Color(0xFFF0F0F5),
+            fontWeight: FontWeight.w700,
+            fontSize: 18,
+          ),
+        ),
+        content: Text(
+          'An SMS will be sent to $name ($phone) notifying them that they have been added as your emergency contact on SheShield.',
+          style: const TextStyle(color: Color(0xFF8A8A9A), fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: Color(0xFF8A8A9A)),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Add & Send SMS',
+              style: TextStyle(
+                color: Color(0xFFE53935),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // Save the contact
     final updated = await StorageService.addContact(_contacts, name, phone);
     setState(() => _contacts = updated);
-    _showPopup('✅ Contact Added', '$name has been added to your emergency contacts.');
+
+    // Send SMS in the background
+    final smsSent = await SmsService.sendContactAddedSms(
+      phoneNumber: phone,
+      contactName: name,
+    );
+
+    if (smsSent) {
+      _showPopup('✅ Contact Added', '$name has been added and an SMS notification has been sent.');
+    } else {
+      _showPopup('✅ Contact Added', '$name has been added but SMS could not be sent. Please check SMS permissions.');
+    }
   }
 
   Future<void> _deleteContact(String id) async {
@@ -214,8 +269,8 @@ class _ContactsScreenState extends State<ContactsScreen> {
                           _showSnackBar('⚠️ Please fill in all fields');
                           return;
                         }
-                        _addContact(name, phone);
                         Navigator.pop(ctx);
+                        _confirmAndAddContact(name, phone);
                       },
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
