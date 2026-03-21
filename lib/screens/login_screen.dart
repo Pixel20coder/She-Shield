@@ -52,8 +52,20 @@ class _LoginScreenState extends State<LoginScreen> {
         );
         // Set display name
         await cred.user?.updateDisplayName(_nameController.text.trim());
+        // Sign out so user is redirected to login page
+        await FirebaseAuth.instance.signOut();
+        if (mounted) {
+          setState(() {
+            _isLogin = true;
+            _isLoading = false;
+            _emailController.clear();
+            _passwordController.clear();
+            _nameController.clear();
+          });
+          _showPopup('✅ Account Created', 'Your account has been created successfully. Please sign in.');
+        }
+        return;
       }
-      // Auth state listener in main.dart will navigate to HomeScreen
     } on FirebaseAuthException catch (e) {
       String msg;
       switch (e.code) {
@@ -127,26 +139,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
               // Logo
               Center(
-                child: Container(
-                  width: 72,
-                  height: 72,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFFE53935), Color(0xFFC62828)],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFFE53935).withValues(alpha: 0.25),
-                        blurRadius: 24,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: const Center(
-                    child: Text('🛡️', style: TextStyle(fontSize: 32)),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(20),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    width: 72,
+                    height: 72,
+                    fit: BoxFit.contain,
                   ),
                 ),
               ),

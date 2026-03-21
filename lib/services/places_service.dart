@@ -39,7 +39,7 @@ class PlacesService {
   static Future<List<PoliceStation>> fetchNearbyPoliceStations(
     double lat,
     double lng, {
-    int radiusMeters = 10000,
+    int radiusMeters = 100000,
   }) async {
     // Fire all sources in parallel and collect all results.
     final futures = await Future.wait<List<PoliceStation>>([

@@ -42,8 +42,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ),
           TextButton(
             onPressed: () async {
-              Navigator.pop(ctx);
+              Navigator.pop(ctx); // close dialog
               await FirebaseAuth.instance.signOut();
+              // Pop all routes back to root so StreamBuilder shows LoginScreen
+              if (context.mounted) {
+                Navigator.of(context).popUntil((route) => route.isFirst);
+              }
             },
             child: const Text('Sign Out', style: TextStyle(color: Color(0xFFE53935), fontWeight: FontWeight.w700)),
           ),
