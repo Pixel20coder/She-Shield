@@ -2,6 +2,10 @@
 
 SheShield is a women's safety wearable system developed for HackHerThon 2026. It consists of a **smart safety bracelet** (ESP32 hardware) and a **Flutter mobile app** (emergency response). The bracelet detects danger via SOS button and shake/motion sensor, then triggers the phone app over **Bluetooth Classic (SPP)** to send alerts, share location, record video, and contact emergency services.
 
+## **<ins>📹 Prototype & App Demonstration Video</ins>**
+
+### **<ins>[▶ Click here to watch the full demo on Google Drive](https://drive.google.com/file/d/1BB_w9BKbrbSptshWBkR0CEz_fbgr8N_p/view?usp=sharing)</ins>**
+
 ---
 
 ## System Architecture
