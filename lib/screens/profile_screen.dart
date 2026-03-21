@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../main.dart';
+import 'login_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -44,9 +45,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onPressed: () async {
               Navigator.pop(ctx); // close dialog
               await FirebaseAuth.instance.signOut();
-              // Pop all routes back to root so StreamBuilder shows LoginScreen
               if (context.mounted) {
-                Navigator.of(context).popUntil((route) => route.isFirst);
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (route) => false, // remove all routes
+                );
               }
             },
             child: const Text('Sign Out', style: TextStyle(color: Color(0xFFE53935), fontWeight: FontWeight.w700)),

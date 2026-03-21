@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -45,6 +46,14 @@ class _LoginScreenState extends State<LoginScreen> {
           email: email,
           password: password,
         );
+        // Navigate to HomeScreen
+        if (mounted) {
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+            (route) => false,
+          );
+        }
+        return;
       } else {
         final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
           email: email,
