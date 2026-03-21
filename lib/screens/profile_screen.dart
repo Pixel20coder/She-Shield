@@ -207,7 +207,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
             // Info cards
             _InfoTile(icon: Icons.email_outlined, label: 'Email', value: email),
             const SizedBox(height: 10),
-            _InfoTile(icon: Icons.badge_outlined, label: 'Display Name', value: name),
+            _EditableNameTile(
+              name: name,
+              onNameChanged: () => setState(() {}),
+            ),
             const SizedBox(height: 10),
             _InfoTile(
               icon: Icons.calendar_today_outlined,
@@ -300,6 +303,132 @@ class _InfoTile extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EditableNameTile extends StatelessWidget {
+  final String name;
+  final VoidCallback onNameChanged;
+
+  const _EditableNameTile({required this.name, required this.onNameChanged});
+
+  void _showEditDialog(BuildContext context) {
+    final controller = TextEditingController(text: name == 'User' ? '' : name);
+    final theme = Theme.of(context);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: theme.colorScheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('✏️ Edit Name',
+            style: TextStyle(
+                color: theme.colorScheme.onSurface,
+                fontWeight: FontWeight.w700,
+                fontSize: 18)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          style: TextStyle(color: theme.colorScheme.onSurface, fontSize: 15),
+          decoration: const InputDecoration(
+            hintText: 'Enter your name',
+            prefixIcon: Icon(Icons.person_outline, size: 20),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: Text('Cancel',
+                style: TextStyle(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.5))),
+          ),
+          TextButton(
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isEmpty) return;
+              Navigator.pop(ctx);
+              try {
+                await FirebaseAuth.instance.currentUser
+                    ?.updateDisplayName(newName);
+                await FirebaseAuth.instance.currentUser?.reload();
+                onNameChanged();
+              } catch (_) {}
+            },
+            child: const Text('Save',
+                style: TextStyle(
+                    color: Color(0xFFE53935), fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.06)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: const Color(0xFFE53935).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Center(
+                child:
+                    Icon(Icons.badge_outlined, color: Color(0xFFE53935), size: 20)),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Display Name',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color:
+                          theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                    )),
+                const SizedBox(height: 2),
+                Text(name,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurface,
+                    ),
+                    overflow: TextOverflow.ellipsis),
+              ],
+            ),
+          ),
+          GestureDetector(
+            onTap: () => _showEditDialog(context),
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: const Color(0xFFE53935).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Center(
+                child: Icon(Icons.edit_outlined,
+                    color: Color(0xFFE53935), size: 16),
+              ),
             ),
           ),
         ],
